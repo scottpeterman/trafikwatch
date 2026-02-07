@@ -10,12 +10,33 @@ from typing import Optional
 
 
 @dataclass
+class SNMPv3Config:
+    """SNMPv3 authentication configuration"""
+    username: str = ""
+    auth_protocol: str = "sha"       # sha, md5
+    auth_password: str = ""
+    priv_protocol: str = "aes128"    # aes128, aes192, aes256, des
+    priv_password: str = ""
+
+    @property
+    def security_level(self) -> str:
+        """Infer security level from what's configured"""
+        if self.priv_password:
+            return "authPriv"
+        elif self.auth_password:
+            return "authNoPriv"
+        return "noAuthNoPriv"
+
+
+@dataclass
 class TargetConfig:
     """A single SNMP target (device) to monitor"""
     host: str
     label: str = ""
-    community: str = ""  # override global
-    port: int = 0        # override global
+    community: str = ""              # override global (v2c)
+    port: int = 0                    # override global
+    version: str = ""                # per-target override ("2c", "3")
+    snmpv3: Optional[SNMPv3Config] = None   # per-target v3 creds
     interfaces: list[str] = field(default_factory=list)
 
     @property
@@ -39,6 +60,7 @@ class AppConfig:
     timeout: float = 5.0
     port: int = 161
     max_history: int = 60   # samples to keep for sparklines
+    snmpv3: Optional[SNMPv3Config] = None   # global v3 creds
     groups: list[GroupConfig] = field(default_factory=list)
 
 

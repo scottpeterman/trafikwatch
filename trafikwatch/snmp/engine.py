@@ -21,15 +21,24 @@ warnings.filterwarnings("ignore", message=".*pysnmp.*deprecated.*")
 from pysnmp.hlapi.asyncio import (
     SnmpEngine,
     CommunityData,
+    UsmUserData,
     UdpTransportTarget,
     ContextData,
     ObjectType,
     ObjectIdentity,
     get_cmd,
     walk_cmd,
+    usmHMACSHAAuthProtocol,
+    usmHMACMD5AuthProtocol,
+    usmAesCfb128Protocol,
+    usmAesCfb192Protocol,
+    usmAesCfb256Protocol,
+    usmDESPrivProtocol,
+    usmNoAuthProtocol,
+    usmNoPrivProtocol,
 )
 
-from ..models import AppConfig, TargetConfig, InterfaceStats, RateSample
+from ..models import AppConfig, TargetConfig, SNMPv3Config, InterfaceStats, RateSample
 
 log = logging.getLogger("trafikwatch.snmp")
 
@@ -41,6 +50,24 @@ OID_IF_HC_IN       = "1.3.6.1.2.1.31.1.1.1.6"
 OID_IF_HC_OUT      = "1.3.6.1.2.1.31.1.1.1.10"
 OID_IF_HIGH_SPEED  = "1.3.6.1.2.1.31.1.1.1.15"
 OID_IF_OPER_STATUS = "1.3.6.1.2.1.2.2.1.8"
+
+# SNMPv3 protocol mappings
+AUTH_PROTOCOLS = {
+    "sha":  usmHMACSHAAuthProtocol,
+    "md5":  usmHMACMD5AuthProtocol,
+    "none": usmNoAuthProtocol,
+}
+PRIV_PROTOCOLS = {
+    "aes":    usmAesCfb128Protocol,
+    "aes128": usmAesCfb128Protocol,
+    "aes192": usmAesCfb192Protocol,
+    "aes256": usmAesCfb256Protocol,
+    "des":    usmDESPrivProtocol,
+    "none":   usmNoPrivProtocol,
+}
+
+# Union type for credentials
+SnmpCredentials = CommunityData | UsmUserData
 
 
 class SNMPPoller:
@@ -72,10 +99,35 @@ class SNMPPoller:
             )
         return self._transport_cache[key]
 
-    def _get_credentials(self, target: TargetConfig) -> CommunityData:
-        """Build credentials for a target"""
+    def _get_credentials(self, target: TargetConfig) -> SnmpCredentials:
+        """Build v2c or v3 credentials for a target"""
+        version = target.version or self.cfg.version
+
+        if version == "3":
+            v3cfg = target.snmpv3 or self.cfg.snmpv3
+            if not v3cfg or not v3cfg.username:
+                raise ValueError(f"{target.host}: version 3 requires snmpv3 config with username")
+
+            auth_proto = AUTH_PROTOCOLS.get(v3cfg.auth_protocol.lower(), usmNoAuthProtocol)
+            priv_proto = PRIV_PROTOCOLS.get(v3cfg.priv_protocol.lower(), usmNoPrivProtocol)
+
+            log.debug(
+                f"{target.host}: v3 user={v3cfg.username} "
+                f"auth={v3cfg.auth_protocol} priv={v3cfg.priv_protocol} "
+                f"level={v3cfg.security_level}"
+            )
+
+            return UsmUserData(
+                v3cfg.username,
+                authKey=v3cfg.auth_password or None,
+                privKey=v3cfg.priv_password or None,
+                authProtocol=auth_proto,
+                privProtocol=priv_proto,
+            )
+
+        # v2c / v1
         community = target.community or self.cfg.community
-        mp_model = 1 if self.cfg.version == "2c" else 0
+        mp_model = 1 if version == "2c" else 0
         return CommunityData(community, mpModel=mp_model)
 
     # -------------------------------------------------------------------------
@@ -172,7 +224,7 @@ class SNMPPoller:
         self,
         host: str,
         transport: UdpTransportTarget,
-        credentials: CommunityData,
+        credentials: SnmpCredentials,
         oid: str,
     ) -> dict[int, str]:
         """Walk an OID table and return {ifIndex: string_value}"""

@@ -17,11 +17,20 @@ warnings.filterwarnings("ignore", message=".*pysnmp.*deprecated.*")
 from pysnmp.hlapi.asyncio import (
     SnmpEngine,
     CommunityData,
+    UsmUserData,
     UdpTransportTarget,
     ContextData,
     ObjectType,
     ObjectIdentity,
     walk_cmd,
+    usmHMACSHAAuthProtocol,
+    usmHMACMD5AuthProtocol,
+    usmAesCfb128Protocol,
+    usmAesCfb192Protocol,
+    usmAesCfb256Protocol,
+    usmDESPrivProtocol,
+    usmNoAuthProtocol,
+    usmNoPrivProtocol,
 )
 
 from .engine import (
@@ -30,6 +39,9 @@ from .engine import (
     OID_IF_ALIAS,
     OID_IF_HIGH_SPEED,
     OID_IF_OPER_STATUS,
+    AUTH_PROTOCOLS,
+    PRIV_PROTOCOLS,
+    SnmpCredentials,
 )
 
 
@@ -57,15 +69,55 @@ class DiscoveredInterface:
     oper_status: str = ""
 
 
+def _build_credentials(
+    version: str = "2c",
+    community: str = "public",
+    v3_user: str = "",
+    v3_auth_protocol: str = "sha",
+    v3_auth_password: str = "",
+    v3_priv_protocol: str = "aes128",
+    v3_priv_password: str = "",
+) -> SnmpCredentials:
+    """Build SNMP credentials for discovery"""
+    if version == "3":
+        if not v3_user:
+            raise ValueError("SNMPv3 requires --v3-user")
+        auth_proto = AUTH_PROTOCOLS.get(v3_auth_protocol.lower(), usmNoAuthProtocol)
+        priv_proto = PRIV_PROTOCOLS.get(v3_priv_protocol.lower(), usmNoPrivProtocol)
+        return UsmUserData(
+            v3_user,
+            authKey=v3_auth_password or None,
+            privKey=v3_priv_password or None,
+            authProtocol=auth_proto,
+            privProtocol=priv_proto,
+        )
+    mp_model = 1 if version == "2c" else 0
+    return CommunityData(community, mpModel=mp_model)
+
+
 async def discover(
     host: str,
     community: str = "public",
     port: int = 161,
     timeout: int = 10,
+    version: str = "2c",
+    v3_user: str = "",
+    v3_auth_protocol: str = "sha",
+    v3_auth_password: str = "",
+    v3_priv_protocol: str = "aes128",
+    v3_priv_password: str = "",
 ) -> list[DiscoveredInterface]:
-    """Discover all interfaces on a host via SNMP"""
+    """Discover all interfaces on a host via SNMP (v2c or v3)"""
     engine = SnmpEngine()
-    credentials = CommunityData(community, mpModel=1)
+    credentials = _build_credentials(
+        version=version,
+        community=community,
+        v3_user=v3_user,
+        v3_auth_protocol=v3_auth_protocol,
+        v3_auth_password=v3_auth_password,
+        v3_priv_protocol=v3_priv_protocol,
+        v3_priv_password=v3_priv_password,
+    )
     transport = await UdpTransportTarget.create(
         (host, port), timeout=timeout, retries=1,
     )
