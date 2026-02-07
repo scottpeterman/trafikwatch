@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trafikwatch"
-version = "0.3.0"
+version = "0.3.1"
 description = "Real-time SNMP interface monitoring from the terminal"
 readme = "README.md"
 license = "MIT"

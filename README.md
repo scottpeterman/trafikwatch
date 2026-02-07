@@ -19,7 +19,7 @@ Designed for network engineers who need eyes on a handful of critical interfaces
 
 ## Dashboard
 
-![trafikwatch dashboard](screenshots/spine_leaf.png)
+![trafikwatch dashboard](https://raw.githubusercontent.com/scottpeterman/trafikwatch/refs/heads/main/screenshots/spine_leaf.png)
 
 Press **Enter** on any row to open a split-screen detail panel with historical line charts. Charts show up to 1 hour of history, building from the right as data accumulates. Both directions auto-scale to the same unit (bps/Kbps/Mbps/Gbps) for easy comparison. Press **Esc** to close the detail view.
 
