@@ -1,0 +1,139 @@
+/* trafikwatch dark theme — network engineer aesthetic */
+
+Screen {
+    background: #0a0a0a;
+}
+
+/* Title bar */
+#title-bar {
+    dock: top;
+    height: 1;
+    background: #0a0a0a;
+    color: #00d4ff;
+    text-style: bold;
+    padding: 0 1;
+}
+
+/* Status bar */
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: #111111;
+    color: #666666;
+    padding: 0 1;
+}
+
+/* Main layout container */
+#main-container {
+    height: 1fr;
+}
+
+/* Table scroll area — full height by default */
+#table-scroll {
+    height: 1fr;
+}
+
+/* When detail panel is open, table gets 60% */
+#table-scroll.split {
+    height: 60%;
+}
+
+/* Group containers */
+.group-container {
+    margin: 0 1;
+    padding: 0;
+    height: auto;
+}
+
+.group-title {
+    color: #00d4ff;
+    text-style: bold;
+    padding: 0 0 0 1;
+    height: 1;
+}
+
+/* Data tables */
+DataTable {
+    height: auto;
+    margin: 0 1;
+    background: #0a0a0a;
+}
+
+DataTable > .datatable--header {
+    color: #00aaff;
+    text-style: bold;
+    background: #0a0a0a;
+}
+
+DataTable > .datatable--cursor {
+    background: #1a1a2e;
+    color: #ffffff;
+}
+
+DataTable > .datatable--even-row {
+    background: #0a0a0a;
+}
+
+DataTable > .datatable--odd-row {
+    background: #0e0e0e;
+}
+
+/* ─── Detail panel (split-screen history charts) ─── */
+
+#detail-panel {
+    height: 40%;
+    margin: 0 1;
+    background: #0a0a0a;
+    border-top: solid #1a1a2e;
+}
+
+#detail-header {
+    height: 1;
+    color: #00d4ff;
+    text-style: bold;
+    padding: 0 0;
+    background: #111111;
+}
+
+#chart-in {
+    height: 1fr;
+    background: #0a0a0a;
+}
+
+#chart-out {
+    height: 1fr;
+    background: #0a0a0a;
+}
+
+/* Rate text styling */
+.rate-ok {
+    color: #00ff88;
+}
+
+.rate-warn {
+    color: #ffcc00;
+}
+
+.rate-crit {
+    color: #ff4444;
+}
+
+.spark {
+    color: #00d4ff;
+}
+
+.error {
+    color: #ff4444;
+}
+
+.dim {
+    color: #666666;
+}
+
+.status-up {
+    color: #00ff88;
+}
+
+.status-down {
+    color: #ff4444;
+}

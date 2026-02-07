@@ -1,0 +1,51 @@
+# trafikwatch.yaml — multi-vendor lab topology
+#
+# Cisco IOSv routers + Arista vEOS spine-leaf fabric
+#
+community: "lab"
+version: "2c"
+interval: 10s
+timeout: 5s
+port: 161
+max_history: 360
+
+groups:
+  - name: "WAN"
+    targets:
+      - host: "172.16.128.6"
+        label: "eng-rtr-1"
+        interfaces:
+          - "Gi0/0"              # To usa-rtr-1
+
+      - host: "172.16.128.5"
+        label: "usa-rtr-1"
+        interfaces:
+          - "Gi0/3"              # To eng-rtr-1
+
+  - name: "Spine Uplinks"
+    targets:
+      - host: "172.16.128.6"
+        label: "eng-rtr-1"
+        interfaces:
+          - "Gi0/2"              # To eng-spine-1
+          - "Gi0/3"              # To eng-spine-2
+
+  - name: "Spine Fabric"
+    targets:
+      - host: "172.16.2.2"
+        label: "eng-spine-1"
+        interfaces:
+          - "Ethernet1"          # To eng-rtr-1
+          - "Ethernet2"          # To eng-spine-2 (L2 trunk + L3)
+          - "Ethernet3"          # To eng-leaf-1
+          - "Ethernet4"          # To eng-leaf-2
+          - "Ethernet5"          # To eng-leaf-3
+
+      - host: "172.16.2.6"
+        label: "eng-spine-2"
+        interfaces:
+          - "Ethernet1"          # To eng-rtr-1
+          - "Ethernet2"          # To eng-spine-1 (L2 trunk + L3)
+          - "Ethernet3"          # To eng-leaf-1
+          - "Ethernet4"          # To eng-leaf-2
+          - "Ethernet5"          # To eng-leaf-3

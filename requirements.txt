@@ -1,0 +1,5 @@
+pysnmp>=7.1
+PyYAML>=6.0
+rich>=14.0
+textual>=7.0
+textual-plotext>=1.0.0
