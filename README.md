@@ -2,8 +2,9 @@
 
 Real-time SNMP interface monitoring from the terminal. Built for watching interfaces during change windows.
 
-![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![PyPI](https://img.shields.io/pypi/v/trafikwatch)
 
 ## What It Does
 
@@ -32,16 +33,27 @@ Press **Enter** on any row to open a split-screen detail panel with historical l
 | `q` | Quit |
 | `r` | Force immediate refresh |
 
-## Quick Start
+## Installation
+
+### From PyPI (recommended)
 
 ```bash
-# Clone and install
+pip install trafikwatch
+```
+
+### From source
+
+```bash
 git clone https://github.com/scottpeterman/trafikwatch.git
 cd trafikwatch
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+```
 
+## Quick Start
+
+```bash
 # Discover interfaces (v2c)
 python -m trafikwatch --discover 172.16.128.6 --community lab
 
@@ -61,7 +73,7 @@ python -m trafikwatch --config trafikwatch.yaml --log /tmp/tw.log
 
 ## Requirements
 
-- Python 3.10 or higher
+- Python 3.9 or higher
 - SNMP v2c or v3 access to target devices (IF-MIB)
 
 ### Dependencies

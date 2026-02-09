@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trafikwatch"
-version = "0.3.3"
+version = "0.3.4"
 description = "Real-time SNMP interface monitoring from the terminal"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "pysnmp>=7.1,<8",
     "pyyaml>=6.0,<7",
