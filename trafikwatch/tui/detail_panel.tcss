@@ -1,0 +1,421 @@
+"""
+Textual TUI dashboard for trafikwatch.
+
+Layout (normal):
+  ┌─ Title Bar ──────────────────────────────────────────┐
+  │ ⚡ trafikwatch                                        │
+  ├──────────────────────────────────────────────────────┤
+  │ ─ Group Name                                         │
+  │ Device       Interface    Descr   Status In  Out  U% │
+  ├──────────────────────────────────────────────────────┤
+  │ ↻ 10s │ Last: 14:32:05 │ 2/2 OK │ q:quit r:refresh │
+  └──────────────────────────────────────────────────────┘
+
+Layout (detail open — Enter on a row):
+  ┌─ Title Bar ──────────────────────────────────────────┐
+  │ ⚡ trafikwatch                                        │
+  ├──────────────────────────────────────────────────────┤
+  │ (tables)                                             │
+  ├──────────────────────────────────────────────────────┤
+  │ › device  interface  description │ In: X  Out: Y     │
+  │          Inbound (Kbps) chart                        │
+  │          Outbound (Kbps) chart                       │
+  ├──────────────────────────────────────────────────────┤
+  │ ↻ 10s │ Last: 14:32:05 │ esc:close  r:refresh       │
+  └──────────────────────────────────────────────────────┘
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import DataTable, Static
+from textual.worker import Worker
+
+from ..config import AppConfig
+from ..models import InterfaceStats, format_rate, sparkline
+from ..snmp.engine import SNMPPoller
+
+# Optional: detail charts require textual-plotext
+try:
+    from textual_plotext import PlotextPlot
+    HAS_PLOTEXT = True
+except ImportError:
+    HAS_PLOTEXT = False
+
+CSS_PATH = Path(__file__).parent / "theme.tcss"
+
+
+def _sanitize_id(name: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_-]', '-', name).strip('-')
+
+
+class TitleBar(Static):
+    pass
+
+
+class StatusBar(Static):
+    pass
+
+
+class GroupTitle(Static):
+    pass
+
+
+class DetailHeader(Static):
+    """Header line above the detail charts"""
+    pass
+
+
+class DetailPanel(Vertical):
+    """Container for the split-screen detail view"""
+    pass
+
+
+class TrafikWatchApp(App):
+    """Main TUI application"""
+
+    CSS_PATH = CSS_PATH
+    TITLE = "trafikwatch"
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit"),
+        Binding("escape", "close_or_quit", "Close/Quit"),
+        Binding("r", "refresh", "Refresh"),
+    ]
+
+    def __init__(self, cfg: AppConfig, poller: SNMPPoller):
+        super().__init__()
+        self.cfg = cfg
+        self.poller = poller
+        self._tables: dict[str, DataTable] = {}
+        self._last_poll: Optional[datetime] = None
+        self._detail_key: Optional[str] = None  # "host:ifName" of selected row
+        self._detail_visible = False
+
+    def compose(self) -> ComposeResult:
+        yield TitleBar("⚡ trafikwatch", id="title-bar")
+
+        with VerticalScroll(id="table-scroll"):
+            for group in self.cfg.groups:
+                with Vertical(classes="group-container"):
+                    yield GroupTitle(f"─ {group.name} ", classes="group-title")
+                    table_id = _sanitize_id(f"table-{group.name}")
+                    table = DataTable(id=table_id, zebra_stripes=True)
+                    yield table
+
+        # Detail panel — hidden by default
+        with DetailPanel(id="detail-panel"):
+            yield DetailHeader(id="detail-header")
+            if HAS_PLOTEXT:
+                yield PlotextPlot(id="chart-inbound")
+                yield PlotextPlot(id="chart-outbound")
+            else:
+                yield Static("(install textual-plotext for detail charts)", id="no-plotext")
+
+        yield StatusBar(id="status-bar")
+
+    def on_mount(self) -> None:
+        """Set up tables and start polling"""
+        # Hide detail panel initially
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.display = False
+
+        for group in self.cfg.groups:
+            table_id = _sanitize_id(f"table-{group.name}")
+            table = self.query_one(f"#{table_id}", DataTable)
+            table.cursor_type = "row"
+
+            table.add_column("Device", width=18, key="device")
+            table.add_column("Interface", width=20, key="interface")
+            table.add_column("Description", width=26, key="descr")
+            table.add_column("Status", width=6, key="status")
+            table.add_column("In", width=12, key="in_rate")
+            table.add_column("▃", width=8, key="in_spark")
+            table.add_column("Out", width=12, key="out_rate")
+            table.add_column("▃", width=8, key="out_spark")
+            table.add_column("Util%", width=7, key="util")
+
+            for target in group.targets:
+                for if_name in target.interfaces:
+                    row_key = f"{target.host}:{if_name}"
+                    table.add_row(
+                        target.display_name,
+                        if_name,
+                        "",
+                        "…",
+                        "—",
+                        "",
+                        "—",
+                        "",
+                        "—",
+                        key=row_key,
+                    )
+
+            self._tables[group.name] = table
+
+        self.run_worker(self._startup(), exclusive=True, group="poll")
+
+    async def _startup(self) -> None:
+        await self.poller.resolve_interfaces()
+        await self._do_poll()
+        self.set_interval(self.cfg.interval, self._poll_tick)
+
+    def _poll_tick(self) -> None:
+        self.run_worker(self._do_poll(), exclusive=True, group="poll")
+
+    async def _do_poll(self) -> None:
+        await self.poller.poll_once()
+        self._last_poll = datetime.now()
+        self._update_tables()
+        if self._detail_visible and self._detail_key:
+            self._update_detail()
+        self._update_status_bar()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Table updates
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _update_tables(self) -> None:
+        grouped = self.poller.get_stats()
+
+        for group_name, stats_list in grouped.items():
+            table = self._tables.get(group_name)
+            if table is None:
+                continue
+
+            for s in stats_list:
+                row_key = f"{s.host}:{s.if_name}"
+
+                if s.poll_error:
+                    try:
+                        table.update_cell(row_key, "device", s.display_host)
+                        table.update_cell(row_key, "interface", s.if_name)
+                        table.update_cell(row_key, "descr", Text(s.if_alias[:26], style="#666666") if s.if_alias else "")
+                        table.update_cell(row_key, "status", _styled_status("err"))
+                        table.update_cell(row_key, "in_rate", Text(s.poll_error[:12], style="red"))
+                        table.update_cell(row_key, "in_spark", "")
+                        table.update_cell(row_key, "out_rate", "")
+                        table.update_cell(row_key, "out_spark", "")
+                        table.update_cell(row_key, "util", "")
+                    except Exception:
+                        pass
+                    continue
+
+                in_str = format_rate(s.in_rate)
+                out_str = format_rate(s.out_rate)
+                in_spark = sparkline(s.history, "in", 8)
+                out_spark = sparkline(s.history, "out", 8)
+                util = s.util_percent
+
+                try:
+                    table.update_cell(row_key, "device", s.display_host)
+                    table.update_cell(row_key, "interface", s.if_name)
+                    table.update_cell(row_key, "descr", Text(s.if_alias[:26], style="#666666") if s.if_alias else "")
+                    table.update_cell(row_key, "status", _styled_status(s.status_text))
+                    table.update_cell(row_key, "in_rate", Text(in_str, style="#00ff88"))
+                    table.update_cell(row_key, "in_spark", Text(in_spark, style="#00d4ff"))
+                    table.update_cell(row_key, "out_rate", Text(out_str, style="#00ff88"))
+                    table.update_cell(row_key, "out_spark", Text(out_spark, style="#00d4ff"))
+                    table.update_cell(row_key, "util", _styled_util(util))
+                except Exception:
+                    pass
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Detail view
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _find_stats(self, key: str) -> Optional[InterfaceStats]:
+        """Look up InterfaceStats by host:ifName key"""
+        grouped = self.poller.get_stats()
+        for stats_list in grouped.values():
+            for s in stats_list:
+                if f"{s.host}:{s.if_name}" == key:
+                    return s
+        return None
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle Enter on a table row — open detail view"""
+        if not HAS_PLOTEXT:
+            return
+
+        row_key = str(event.row_key.value) if event.row_key else None
+        if row_key is None:
+            return
+
+        self._detail_key = row_key
+        self._detail_visible = True
+
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.display = True
+
+        self._update_detail()
+
+    def _update_detail(self) -> None:
+        """Refresh the detail charts for the selected interface"""
+        if not HAS_PLOTEXT or not self._detail_key:
+            return
+
+        s = self._find_stats(self._detail_key)
+        if s is None:
+            return
+
+        # Update header: › device  interface  description │ In: X  Out: Y
+        descr_part = f"  {s.if_alias}" if s.if_alias else ""
+        header_text = (
+            f"› {s.display_host}  {s.if_name}{descr_part}  │  "
+            f"In: {format_rate(s.in_rate)}  Out: {format_rate(s.out_rate)}"
+        )
+        header = self.query_one("#detail-header", DetailHeader)
+        header.update(Text(header_text, style="bold #00d4ff"))
+
+        # Build time series from history
+        if not s.history:
+            return
+
+        # Calculate minutes-ago for x-axis (builds from right like the screenshot)
+        now = s.history[-1].timestamp
+        max_window = 60.0  # minutes
+
+        x_vals = []
+        in_vals = []
+        out_vals = []
+        for sample in s.history:
+            minutes_ago = (now - sample.timestamp).total_seconds() / 60.0
+            x_vals.append(-minutes_ago)  # negative so 0 is "now" on the right
+            in_vals.append(sample.in_rate)
+            out_vals.append(sample.out_rate)
+
+        # Pick a common unit for display
+        in_unit, in_divisor, in_label = _auto_unit(in_vals)
+        out_unit, out_divisor, out_label = _auto_unit(out_vals)
+
+        in_scaled = [v / in_divisor for v in in_vals]
+        out_scaled = [v / out_divisor for v in out_vals]
+
+        # Inbound chart
+        try:
+            in_plot = self.query_one("#chart-inbound", PlotextPlot)
+            plt_in = in_plot.plt
+            plt_in.clear_data()
+            plt_in.clear_figure()
+            plt_in.theme("dark")
+            plt_in.title(f"Inbound ({in_label})")
+            plt_in.xlabel("Minutes ago")
+            plt_in.xlim(-max_window, 0)
+            if in_scaled:
+                plt_in.ylim(0, max(max(in_scaled) * 1.2, 0.001))
+            plt_in.plot(x_vals, in_scaled, color=(0, 212, 255))
+            in_plot.refresh()
+        except Exception:
+            pass
+
+        # Outbound chart
+        try:
+            out_plot = self.query_one("#chart-outbound", PlotextPlot)
+            plt_out = out_plot.plt
+            plt_out.clear_data()
+            plt_out.clear_figure()
+            plt_out.theme("dark")
+            plt_out.title(f"Outbound ({out_label})")
+            plt_out.xlabel("Minutes ago")
+            plt_out.xlim(-max_window, 0)
+            if out_scaled:
+                plt_out.ylim(0, max(max(out_scaled) * 1.2, 0.001))
+            plt_out.plot(x_vals, out_scaled, color=(0, 255, 136))
+            out_plot.refresh()
+        except Exception:
+            pass
+
+    def _close_detail(self) -> None:
+        """Hide the detail panel"""
+        self._detail_visible = False
+        self._detail_key = None
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.display = False
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Status bar
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _update_status_bar(self) -> None:
+        total, healthy = self.poller.device_count()
+        interval = f"{self.cfg.interval:.0f}s"
+        last = self._last_poll.strftime("%H:%M:%S") if self._last_poll else "never"
+
+        if self._detail_visible:
+            hint = "esc:close  r:refresh  q:quit"
+        else:
+            hint = "q:quit  r:refresh"
+
+        bar = self.query_one("#status-bar", StatusBar)
+        bar.update(
+            f"  ↻ {interval} │ Last poll: {last} │ "
+            f"{healthy}/{total} devices OK │ {hint}"
+        )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Actions
+    # ─────────────────────────────────────────────────────────────────────
+
+    def action_refresh(self) -> None:
+        self.run_worker(self._do_poll(), exclusive=True, group="poll")
+
+    def action_close_or_quit(self) -> None:
+        """Esc: close detail if open, otherwise quit"""
+        if self._detail_visible:
+            self._close_detail()
+            self._update_status_bar()
+        else:
+            self.poller.shutdown()
+            self.exit()
+
+    def action_quit(self) -> None:
+        self.poller.shutdown()
+        self.exit()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _auto_unit(values: list[float]) -> tuple[str, float, str]:
+    """Pick bps/Kbps/Mbps/Gbps based on peak value. Returns (suffix, divisor, label)."""
+    peak = max(values) if values else 0
+    if peak >= 1e9:
+        return ("Gbps", 1e9, "Gbps")
+    elif peak >= 1e6:
+        return ("Mbps", 1e6, "Mbps")
+    elif peak >= 1e3:
+        return ("Kbps", 1e3, "Kbps")
+    else:
+        return ("bps", 1.0, "bps")
+
+
+def _styled_status(status: str) -> Text:
+    colors = {
+        "up": "#00ff88",
+        "down": "#ff4444",
+        "testing": "#ffcc00",
+        "err": "#ff4444",
+    }
+    return Text(status, style=colors.get(status, "#666666"))
+
+
+def _styled_util(util: float) -> Text:
+    s = f"{util:.0f}%"
+    if util > 80:
+        return Text(s, style="#ff4444")
+    elif util > 50:
+        return Text(s, style="#ffcc00")
+    elif util > 0:
+        return Text(s, style="#00ff88")
+    else:
+        return Text(s, style="#666666")

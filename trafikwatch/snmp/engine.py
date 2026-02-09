@@ -208,6 +208,14 @@ class SNMPPoller:
                     if idx in alias_map and alias_map[idx]:
                         self._stats[key].if_alias = alias_map[idx]
                         log.debug(f"{target.host}: '{if_name}' alias='{alias_map[idx]}'")
+                    elif '.' in if_name:
+                        # Juniper subinterface (ae8.0, et-0/1/8.0) — description
+                        # lives on the parent interface, not the unit
+                        parent_name = if_name.rsplit('.', 1)[0]
+                        parent_idx = index_map.get(parent_name)
+                        if parent_idx and parent_idx in alias_map and alias_map[parent_idx]:
+                            self._stats[key].if_alias = alias_map[parent_idx]
+                            log.debug(f"{target.host}: '{if_name}' inherited alias from '{parent_name}'")
                 else:
                     self._stats[key].poll_error = "interface not found"
                     # Show what names ARE available so the user can fix their config
